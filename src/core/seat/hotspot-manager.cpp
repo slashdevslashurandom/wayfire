@@ -8,6 +8,7 @@ void wf::hotspot_instance_t::process_input_motion(wf::pointf_t gc)
     const auto& reset_hotspot = [&] ()
     {
         timer.disconnect();
+        this->pressure = 0;
         this->armed = true;
     };
 
@@ -23,6 +24,69 @@ void wf::hotspot_instance_t::process_input_motion(wf::pointf_t gc)
     {
         reset_hotspot();
         return;
+    }
+
+    if (!timer.is_connected() && this->armed)
+    {
+        this->armed = false;
+        timer.set_timeout(timeout_ms, [=] ()
+        {
+            callback(this->edges);
+            return false;
+        });
+    }
+}
+
+void wf::hotspot_instance_t::process_pointer_motion(wf::pointf_t gc, double dx, double dy, uint32_t time_msec)
+{
+    const auto& reset_hotspot = [&] ()
+    {
+        timer.disconnect();
+        this->pressure = 0;
+        this->armed = true;
+    };
+
+    auto target = wf::get_core().output_layout->get_output_coords_at(gc, gc);
+    if (target != last_output)
+    {
+        reset_hotspot();
+        last_output = target;
+        recalc_geometry();
+    }
+
+    if (!(hotspot_geometry[0] & gc) && !(hotspot_geometry[1] & gc))
+    {
+        reset_hotspot();
+        return;
+    }
+
+    // this code tries to calculate how much the cursor is moving towards the
+    // screen edge that the hotspot is in. it assumes that the hotspot must
+    // be in one of the four edges.
+
+    double x_toward_edge = (edges & WLR_EDGE_LEFT) ? -dx : dx;
+    double y_toward_edge = (edges & WLR_EDGE_TOP) ? -dy : dy;
+
+    // if the cursor is not moved towards the edge, the hotspot is reset
+    bool moving_towards_edge = (x_toward_edge >= 0) && (y_toward_edge >= 0);
+
+    if (!moving_towards_edge) {
+        reset_hotspot();
+        return;
+    }
+
+    //calculate the total motion using the Pythagorean theorem
+    this->pressure += sqrt((x_toward_edge * x_toward_edge) + (y_toward_edge * y_toward_edge));
+
+    if (this->pressure > 128.0) {
+        timer.disconnect();
+        this->armed = false;
+        this->pressure = - std::numeric_limits<double>::infinity();
+        //once a hotspot has been pressure activated, it must be reset, usually by moving away from the hotspot
+        idle_pressure.run_once( [=] () {
+                    callback(this->edges);
+                    return false;
+        });
     }
 
     if (!timer.is_connected() && this->armed)
@@ -102,7 +166,7 @@ void wf::hotspot_instance_t::recalc_geometry() noexcept
 wf::hotspot_instance_t::hotspot_instance_t(uint32_t edges, uint32_t along, uint32_t away, int32_t timeout,
     std::function<void(uint32_t)> callback)
 {
-    wf::get_core().connect(&on_motion_event);
+    wf::get_core().connect(&on_tablet_axis); //"on_motion_event" was typed twice
     wf::get_core().connect(&on_motion_event);
     wf::get_core().connect(&on_touch_motion);
 
@@ -120,9 +184,9 @@ wf::hotspot_instance_t::hotspot_instance_t(uint32_t edges, uint32_t along, uint3
         process_input_motion(wf::get_core().get_cursor_position());
     };
 
-    on_motion_event = [=] (auto)
+    on_motion_event = [=] (wf::post_input_event_signal<wlr_pointer_motion_event> *ev)
     {
-        process_input_motion(wf::get_core().get_cursor_position());
+        process_pointer_motion(wf::get_core().get_cursor_position(),ev->event->unaccel_dx,ev->event->unaccel_dy,ev->event->time_msec);
     };
 
     on_touch_motion = [=] (auto)

@@ -55,6 +55,12 @@ class hotspot_instance_t
 
     /** Edges of the hotspot */
     uint32_t edges;
+    
+    /** Idle call used to activate the callback when pressure is used */
+    wf::wl_idle_call idle_pressure;
+
+    /** Pressure accumulated against the hotspot */
+    double pressure = 0;
 
     /** Callback to execute */
     std::function<void(uint32_t)> callback;
@@ -65,6 +71,9 @@ class hotspot_instance_t
 
     /** Update state based on input motion */
     void process_input_motion(wf::pointf_t gc);
+    
+    /** Update state based on relative mouse motion */
+    void process_pointer_motion(wf::pointf_t gc, double dx, double dy, uint32_t time_msec);
 
     /** Calculate a rectangle with size @dim inside @og at the correct edges. */
     wf::geometry_t pin(wf::dimensions_t dim) noexcept;
